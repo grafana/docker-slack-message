@@ -50,6 +50,13 @@ func main() {
 		panic(err)
 	}
 
+	// If we already had a threadTs passed in (via env), keep using that one so
+	// that replies are threaded to the original thread. Replying to a reply
+	// doesn't work.
+	if cfg.ThreadTs != "" {
+		threadTs = cfg.ThreadTs
+	}
+
 	// Write the threadTs to a file to be reused in another container (For example, steps in Argo Workflows)
 	if cfg.OutputDir != "" {
 		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "thread-ts"), []byte(fmt.Sprintf("%s", threadTs)), 0644); err != nil {
