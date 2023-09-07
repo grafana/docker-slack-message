@@ -84,10 +84,15 @@ func content(cfg config) slack.MsgOption {
 		))
 	}
 
+	fallback := cfg.Message
+	if fallback == "" {
+		fallback = cfg.Title
+	}
+
 	attachment := slack.Attachment{
-		Fallback: cfg.Message,
-		Blocks: slack.Blocks{BlockSet: blocks},
-		Color:  cfg.Color,
+		Fallback: fallback,
+		Blocks:   slack.Blocks{BlockSet: blocks},
+		Color:    cfg.Color,
 	}
 
 	return slack.MsgOptionAttachments(attachment)
