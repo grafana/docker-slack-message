@@ -40,13 +40,13 @@ func main() {
 
 	// Send the message
 	options := []slack.MsgOption{content(cfg)}
-	if cfg.ThreadTs != "" {
+	if cfg.UpdateTs != "" {
+		options = append(options, slack.MsgOptionUpdate(cfg.UpdateTs))
+	} else if cfg.ThreadTs != "" {
 		options = append(options, slack.MsgOptionTS(cfg.ThreadTs))
 		if cfg.AlsoSendToChannel {
 			options = append(options, slack.MsgOptionBroadcast())
 		}
-	} else if cfg.UpdateTs != "" {
-		options = append(options, slack.MsgOptionUpdate(cfg.UpdateTs))
 	}
 	channelID, messageTs, _, err := client.SendMessage(cfg.Channel, options...)
 	if err != nil {
