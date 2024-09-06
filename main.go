@@ -22,6 +22,7 @@ type config struct {
 	OutputDir         string `envconfig:"SLACK_OUTPUT_DIR" default:"/app/outputs"`
 	ThreadTs          string `envconfig:"SLACK_THREAD_TS"`
 	UpdateTs          string `envconfig:"SLACK_UPDATE_MESSAGE_TS"`
+	DeleteTs          string `envconfig:"SLACK_DELETE_MESSAGE_TS"`
 	Token             string `envconfig:"SLACK_TOKEN" required:"true"`
 }
 
@@ -38,10 +39,16 @@ func main() {
 
 	client := slack.New(cfg.Token)
 
+	if cfg.UpdateTs != "" && cfg.DeleteTs != "" {
+		log.Fatal("Cannot update and delete a message at the same time")
+	}
+
 	// Send the message
 	options := []slack.MsgOption{content(cfg)}
 	if cfg.UpdateTs != "" {
 		options = append(options, slack.MsgOptionUpdate(cfg.UpdateTs))
+	} else if cfg.DeleteTs != "" {
+		options = append(options, slack.MsgOptionDelete(cfg.DeleteTs))
 	} else if cfg.ThreadTs != "" {
 		options = append(options, slack.MsgOptionTS(cfg.ThreadTs))
 		if cfg.AlsoSendToChannel {
