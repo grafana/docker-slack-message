@@ -45,8 +45,7 @@ func main() {
 		if cfg.AlsoSendToChannel {
 			options = append(options, slack.MsgOptionBroadcast())
 		}
-	}
-	if cfg.UpdateTs != "" {
+	} else if cfg.UpdateTs != "" {
 		options = append(options, slack.MsgOptionUpdate(cfg.UpdateTs))
 	}
 	channelID, messageTs, _, err := client.SendMessage(cfg.Channel, options...)
