@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -21,6 +21,8 @@ type config struct {
 	Channel           string `envconfig:"SLACK_CHANNEL" required:"true"`
 	OutputDir         string `envconfig:"SLACK_OUTPUT_DIR" default:"/app/outputs"`
 	ThreadTs          string `envconfig:"SLACK_THREAD_TS"`
+	UpdateTs          string `envconfig:"SLACK_UPDATE_MESSAGE_TS"`
+	DeleteTs          string `envconfig:"SLACK_DELETE_MESSAGE_TS"`
 	Token             string `envconfig:"SLACK_TOKEN" required:"true"`
 }
 
@@ -33,33 +35,55 @@ func (c config) String() string {
 func main() {
 	var cfg config
 	envconfig.MustProcess("", &cfg)
-	fmt.Printf("Config: %s\n", cfg)
+	log.Printf("Config: %s\n", cfg)
 
 	client := slack.New(cfg.Token)
 
+	if cfg.UpdateTs != "" && cfg.DeleteTs != "" {
+		log.Fatal("Cannot update and delete a message at the same time")
+	}
+
 	// Send the message
 	options := []slack.MsgOption{content(cfg)}
-	if cfg.ThreadTs != "" {
+	if cfg.UpdateTs != "" {
+		options = append(options, slack.MsgOptionUpdate(cfg.UpdateTs))
+	} else if cfg.DeleteTs != "" {
+		options = append(options, slack.MsgOptionDelete(cfg.DeleteTs))
+	} else if cfg.ThreadTs != "" {
 		options = append(options, slack.MsgOptionTS(cfg.ThreadTs))
 		if cfg.AlsoSendToChannel {
 			options = append(options, slack.MsgOptionBroadcast())
 		}
 	}
-	_, threadTs, _, err := client.SendMessage(cfg.Channel, options...)
+	channelID, messageTs, _, err := client.SendMessage(cfg.Channel, options...)
 	if err != nil {
 		panic(err)
 	}
 
-	// If we already had a threadTs passed in (via env), keep using that one so
-	// that replies are threaded to the original thread. Replying to a reply
-	// doesn't work.
-	if cfg.ThreadTs != "" {
-		threadTs = cfg.ThreadTs
+	// threadTs is the timestamp of the root message of a thread.
+	// If the message is a reply (threadTs passed in config), then keep the threadTs.
+	// If not, this is a new thread, so the root message is the current message,
+	// and the threadTs is the same as the messageTs.
+	threadTs := cfg.ThreadTs
+	if threadTs == "" {
+		threadTs = messageTs
 	}
 
-	// Write the threadTs to a file to be reused in another container (For example, steps in Argo Workflows)
+	// Write the channelID, messageTs and threadTs to a file to be reused in another container (For example, steps in Argo Workflows)
+	// ThreadTs: timestamp of the root message of a thread
+	// MessageTs: timestamp of the message (root or reply)
+	// ChannelID: ID of the channel where the message was sent. This is required to update messages. The API requires the ID, not the name.
 	if cfg.OutputDir != "" {
-		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "thread-ts"), []byte(fmt.Sprintf("%s", threadTs)), 0644); err != nil {
+		log.Printf("channel-id: %s\n", channelID)
+		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "channel-id"), []byte(channelID), 0644); err != nil {
+			panic(err)
+		}
+		log.Printf("message-ts: %s\n", messageTs)
+		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "message-ts"), []byte(messageTs), 0644); err != nil {
+			panic(err)
+		}
+		log.Printf("thread-ts: %s\n", threadTs)
+		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "thread-ts"), []byte(threadTs), 0644); err != nil {
 			panic(err)
 		}
 	}
