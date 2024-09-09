@@ -60,9 +60,10 @@ func main() {
 		panic(err)
 	}
 
-	// If we already had a threadTs passed in (via env), keep using that one so
-	// that replies are threaded to the original thread. Replying to a reply
-	// doesn't work.
+	// threadTs is the timestamp of the root message of a thread.
+	// If the message is a reply (threadTs passed in config), then keep the threadTs.
+	// If not, this is a new thread, so the root message is the current message,
+	// and the threadTs is the same as the messageTs.
 	threadTs := cfg.ThreadTs
 	if threadTs == "" {
 		threadTs = messageTs
