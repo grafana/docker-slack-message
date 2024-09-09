@@ -68,7 +68,7 @@ func main() {
 		threadTs = messageTs
 	}
 
-	// Write the messageTs and threadTs to a file to be reused in another container (For example, steps in Argo Workflows)
+	// Write the channelID, messageTs and threadTs to a file to be reused in another container (For example, steps in Argo Workflows)
 	// ThreadTs: timestamp of the root message of a thread
 	// MessageTs: timestamp of the message (root or reply)
 	// ChannelID: ID of the channel where the message was sent. This is required to update messages. The API requires the ID, not the name.
