@@ -11,10 +11,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
-    permissions:
+    permissions: 
       contents: read
-      packages: write
       
     steps:
     - name: Login to Docker Hub
