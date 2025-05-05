@@ -11,13 +11,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions: 
+      contents: read
+      
     steps:
     - name: Login to Docker Hub
       uses: grafana/shared-workflows/actions/dockerhub-login@117d8511cbc5da0337972deeb400c4298b057af3 #v1.0.1
       if: github.event_name != 'pull_request'
     - uses: actions/checkout@v4
-      with: 
-        persist-credentials: false
+      with:
+          persist-credentials: false
     - run: make build
     - run: make push
       if: github.event_name != 'pull_request'
