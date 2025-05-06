@@ -23,4 +23,3 @@ jobs:
           persist-credentials: false
     - run: make build
     - run: make push
-      if: github.event_name != 'pull_request'
