@@ -1,4 +1,4 @@
-FROM golang:1.21.4@sha256:9baee0edab4139ae9b108fffabb8e2e98a67f0b259fd25283c2a084bd74fea0d as build
+FROM golang:1.25.3@sha256:ffa2e570108dd80c155d6ea9447b2410d0ed739e8cc9e256d6bd5d818c7a03e2 AS build
 
 WORKDIR /app
 COPY . .
@@ -9,4 +9,4 @@ FROM alpine:latest@sha256:4b7ce07002c69e8f3d704a9c5d6fd3053be500b7f1c69fc0d80990
 COPY --from=build /app/slack-message /app/slack-message
 RUN mkdir /app/outputs
 
-CMD /app/slack-message
+ENTRYPOINT ["/app/slack-message"]
