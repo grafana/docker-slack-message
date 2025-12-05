@@ -6,7 +6,6 @@ RUN CGO_ENABLED=0 go build -o slack-message ./...
 
 FROM alpine:latest@sha256:51183f2cfa6320055da30872f211093f9ff1d3cf06f39a0bdb212314c5dc7375
 
-RUN apk add --no-cache jq curl
 COPY --from=build /app/slack-message /app/slack-message
 RUN mkdir /app/outputs
 
