@@ -1,10 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-	"log"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
 	"github.com/slack-go/slack"
@@ -24,6 +31,22 @@ type config struct {
 	UpdateTs          string `envconfig:"SLACK_UPDATE_MESSAGE_TS"`
 	DeleteTs          string `envconfig:"SLACK_DELETE_MESSAGE_TS"`
 	Token             string `envconfig:"SLACK_TOKEN" required:"true"`
+	GitHubUser        string `envconfig:"GH_USER"`
+	EnableMentions    bool   `envconfig:"ENABLE_SLACK_MENTIONS"`
+	MappingEndpoint   string `envconfig:"GITHUB_SLACK_MAPPING_ENDPOINT"`
+}
+
+const (
+	slackMentionTimeout   = 30 * time.Second
+	usernameBoundaryClass = `[^A-Za-z0-9-]`
+)
+
+type slackUserNotFoundError struct {
+	GitHubUser string
+}
+
+func (e *slackUserNotFoundError) Error() string {
+	return fmt.Sprintf("slack user not found in mapping API for %s", e.GitHubUser)
 }
 
 func (c config) String() string {
@@ -35,12 +58,18 @@ func (c config) String() string {
 func main() {
 	var cfg config
 	envconfig.MustProcess("", &cfg)
-	log.Printf("Config: %s\n", cfg)
+	slog.Info("Config loaded", "config", cfg.String())
 
-	client := slack.New(cfg.Token)
+	slackClient := slack.New(cfg.Token)
+	httpClient := &http.Client{
+		Timeout: slackMentionTimeout,
+	}
+
+	cfg.Message = prependSlackMention(context.Background(), cfg, httpClient)
 
 	if cfg.UpdateTs != "" && cfg.DeleteTs != "" {
-		log.Fatal("Cannot update and delete a message at the same time")
+		slog.Error("Cannot update and delete a message at the same time")
+		os.Exit(1)
 	}
 
 	// Send the message
@@ -55,7 +84,7 @@ func main() {
 			options = append(options, slack.MsgOptionBroadcast())
 		}
 	}
-	channelID, messageTs, _, err := client.SendMessage(cfg.Channel, options...)
+	channelID, messageTs, _, err := slackClient.SendMessage(cfg.Channel, options...)
 	if err != nil {
 		panic(err)
 	}
@@ -74,15 +103,15 @@ func main() {
 	// MessageTs: timestamp of the message (root or reply)
 	// ChannelID: ID of the channel where the message was sent. This is required to update messages. The API requires the ID, not the name.
 	if cfg.OutputDir != "" {
-		log.Printf("channel-id: %s\n", channelID)
+		slog.Info("channel-id written", "channel_id", channelID)
 		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "channel-id"), []byte(channelID), 0644); err != nil {
 			panic(err)
 		}
-		log.Printf("message-ts: %s\n", messageTs)
+		slog.Info("message-ts written", "message_ts", messageTs)
 		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "message-ts"), []byte(messageTs), 0644); err != nil {
 			panic(err)
 		}
-		log.Printf("thread-ts: %s\n", threadTs)
+		slog.Info("thread-ts written", "thread_ts", threadTs)
 		if err := os.WriteFile(filepath.Join(cfg.OutputDir, "thread-ts"), []byte(threadTs), 0644); err != nil {
 			panic(err)
 		}
@@ -120,4 +149,86 @@ func content(cfg config) slack.MsgOption {
 	}
 
 	return slack.MsgOptionAttachments(attachment)
+}
+
+func prependSlackMention(ctx context.Context, cfg config, httpClient *http.Client) string {
+	message := cfg.Message
+	if cfg.MappingEndpoint == "" {
+		slog.Info("GITHUB_SLACK_MAPPING_ENDPOINT not set, skipping mention")
+		return message
+	}
+
+	if !cfg.EnableMentions {
+		slog.Info("Slack mentions disabled via ENABLE_SLACK_MENTIONS, skipping mention")
+		return message
+	}
+
+	ghUser := cfg.GitHubUser
+	if ghUser == "" {
+		slog.Info("GH_USER empty, skipping mention")
+		return message
+	}
+
+	if !containsGitHubUsername(message, ghUser) {
+		slog.Info("GitHub username not found in message, skipping mention", "github_user", ghUser)
+		return message
+	}
+
+	slackID, err := fetchSlackUserID(ctx, httpClient, ghUser, cfg.MappingEndpoint)
+	if err != nil {
+		var notFoundErr *slackUserNotFoundError
+		if errors.As(err, &notFoundErr) {
+			slog.Warn("GitHub user not found in mapping API, skipping mention", "github_user", notFoundErr.GitHubUser)
+		} else {
+			slog.Error("Failed to fetch Slack user, skipping mention", "github_user", ghUser, "error", err)
+		}
+		return message
+	}
+
+	slog.Info("Slack ID found", "github_user", ghUser, "slack_user_id", slackID)
+	return fmt.Sprintf("<@%s>: %s", slackID, message)
+}
+
+func containsGitHubUsername(message, username string) bool {
+	pattern := fmt.Sprintf(`(?i)(^|%s)%s(%s|$)`, usernameBoundaryClass, username, usernameBoundaryClass)
+	re := regexp.MustCompile(pattern)
+	return re.MatchString(message)
+}
+
+type slackMappingResponse struct {
+	SlackUserID string `json:"slack_user_id"`
+}
+
+func fetchSlackUserID(ctx context.Context, httpClient *http.Client, ghUser string, endpoint string) (string, error) {
+	url := endpoint + ghUser
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create mapping request: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("execute mapping request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read mapping response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return "", &slackUserNotFoundError{GitHubUser: ghUser}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("mapping API returned status %d: %s", resp.StatusCode, body)
+	}
+
+	var payload slackMappingResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", fmt.Errorf("unmarshal mapping response: %w", err)
+	}
+
+	return payload.SlackUserID, nil
 }
