@@ -38,7 +38,7 @@ type config struct {
 
 const (
 	slackMentionTimeout   = 30 * time.Second
-	usernameBoundaryClass = `[^A-Za-z0-9-]`
+	usernameBoundaryClass = `[^A-Za-z0-9_-]`
 )
 
 type slackUserNotFoundError struct {
