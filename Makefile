@@ -16,3 +16,7 @@ push: build
 	docker push $(COMMIT_IMAGE)
 	docker push $(DATE_IMAGE)
 
+.PHONY: test
+test:
+	go test ./...
+
