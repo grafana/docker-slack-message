@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/slack-go/slack v0.18.0
+	github.com/slack-go/slack v0.19.0
 	github.com/stretchr/testify v1.11.1
 )
 
