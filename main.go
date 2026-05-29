@@ -34,12 +34,50 @@ type config struct {
 	GitHubUser        string `envconfig:"GH_USER"`
 	EnableMentions    bool   `envconfig:"ENABLE_SLACK_MENTIONS"`
 	MappingEndpoint   string `envconfig:"GITHUB_SLACK_MAPPING_ENDPOINT"`
+
+	// MentionMembershipMode controls what happens to Slack users tagged in the
+	// message: "none" (default, no-op), "invite" (add them to the channel) or
+	// "notify" (DM them a link to the channel).
+	MentionMembershipMode string `envconfig:"SLACK_MENTION_MEMBERSHIP_MODE" default:"none"`
 }
 
 const (
 	slackMentionTimeout   = 30 * time.Second
 	usernameBoundaryClass = `[^A-Za-z0-9_-]`
 )
+
+type membershipMode string
+
+const (
+	membershipModeNone   membershipMode = "none"
+	membershipModeInvite membershipMode = "invite"
+	membershipModeNotify membershipMode = "notify"
+)
+
+func parseMembershipMode(s string) (membershipMode, error) {
+	switch membershipMode(s) {
+	case "", membershipModeNone:
+		return membershipModeNone, nil
+	case membershipModeInvite, membershipModeNotify:
+		return membershipMode(s), nil
+	default:
+		return "", fmt.Errorf("invalid SLACK_MENTION_MEMBERSHIP_MODE %q (valid: none, invite, notify)", s)
+	}
+}
+
+// slackMembershipClient is the subset of *slack.Client used to invite or notify
+// mentioned users. Defining it as an interface keeps the API calls thin and lets
+// tests inject a fake. *slack.Client satisfies it.
+type slackMembershipClient interface {
+	InviteUsersToConversationContext(ctx context.Context, channelID string, users ...string) (*slack.Channel, error)
+	OpenConversationContext(ctx context.Context, params *slack.OpenConversationParameters) (*slack.Channel, bool, bool, error)
+	PostMessageContext(ctx context.Context, channelID string, options ...slack.MsgOption) (string, string, error)
+}
+
+// slackMentionRe matches Slack user mentions: <@U012ABC> or <@W012ABC> (W = grid
+// users), optionally with a label as in <@U012ABC|alice>. It deliberately does
+// not match channel mentions (<#C...>) or special mentions (<!here>).
+var slackMentionRe = regexp.MustCompile(`<@([UW][A-Z0-9]+)(?:\|[^>]*)?>`)
 
 type slackUserNotFoundError struct {
 	GitHubUser string
@@ -59,6 +97,12 @@ func main() {
 	var cfg config
 	envconfig.MustProcess("", &cfg)
 	slog.Info("Config loaded", "config", cfg.String())
+
+	mode, err := parseMembershipMode(cfg.MentionMembershipMode)
+	if err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(1)
+	}
 
 	slackClient := slack.New(cfg.Token)
 	httpClient := &http.Client{
@@ -87,6 +131,13 @@ func main() {
 	channelID, messageTs, _, err := slackClient.SendMessage(cfg.Channel, options...)
 	if err != nil {
 		panic(err)
+	}
+
+	// Best-effort: invite or notify any users tagged in the message who may not
+	// be in the channel. Only for new messages/replies — for update the original
+	// send already handled it, and a delete has nothing to be mentioned in.
+	if cfg.UpdateTs == "" && cfg.DeleteTs == "" {
+		ensureMentionMembership(context.Background(), slackClient, mode, channelID, cfg.Message)
 	}
 
 	// threadTs is the timestamp of the root message of a thread.
@@ -187,6 +238,79 @@ func prependSlackMention(ctx context.Context, cfg config, httpClient *http.Clien
 
 	slog.Info("Slack ID found", "github_user", ghUser, "slack_user_id", slackID)
 	return fmt.Sprintf("<@%s>: %s", slackID, message)
+}
+
+// extractMentionedUserIDs returns the unique Slack user IDs mentioned in the
+// message, preserving first-seen order.
+func extractMentionedUserIDs(message string) []string {
+	matches := slackMentionRe.FindAllStringSubmatch(message, -1)
+	seen := make(map[string]struct{}, len(matches))
+	var ids []string
+	for _, m := range matches {
+		if _, ok := seen[m[1]]; ok {
+			continue
+		}
+		seen[m[1]] = struct{}{}
+		ids = append(ids, m[1])
+	}
+	return ids
+}
+
+// ensureMentionMembership invites or notifies (per mode) the users tagged in the
+// message. It is best-effort: every failure is logged, none is fatal.
+func ensureMentionMembership(ctx context.Context, client slackMembershipClient, mode membershipMode, channelID, message string) {
+	if mode == membershipModeNone {
+		return
+	}
+
+	ids := extractMentionedUserIDs(message)
+	if len(ids) == 0 {
+		slog.Info("No Slack mentions found, skipping membership step")
+		return
+	}
+
+	switch mode {
+	case membershipModeInvite:
+		inviteMentionedUsers(ctx, client, channelID, ids)
+	case membershipModeNotify:
+		notifyMentionedUsers(ctx, client, channelID, ids)
+	}
+}
+
+// inviteMentionedUsers invites each user individually. conversations.invite is
+// all-or-nothing per call, so a single already-member id would otherwise block
+// inviting everyone else.
+func inviteMentionedUsers(ctx context.Context, client slackMembershipClient, channelID string, ids []string) {
+	for _, id := range ids {
+		_, err := client.InviteUsersToConversationContext(ctx, channelID, id)
+		if err == nil {
+			slog.Info("Invited user to channel", "channel_id", channelID, "user", id)
+			continue
+		}
+
+		switch err.Error() {
+		case "already_in_channel", "cant_invite_self", "user_is_bot":
+			slog.Info("Invite no-op", "reason", err.Error(), "user", id)
+		default:
+			slog.Warn("Failed to invite user to channel", "channel_id", channelID, "user", id, "error", err)
+		}
+	}
+}
+
+// notifyMentionedUsers DMs each mentioned user a link to the channel.
+func notifyMentionedUsers(ctx context.Context, client slackMembershipClient, channelID string, ids []string) {
+	for _, id := range ids {
+		ch, _, _, err := client.OpenConversationContext(ctx, &slack.OpenConversationParameters{Users: []string{id}})
+		if err != nil {
+			slog.Warn("Failed to open DM", "user", id, "error", err)
+			continue
+		}
+
+		text := fmt.Sprintf("You were mentioned in <#%s>.", channelID)
+		if _, _, err := client.PostMessageContext(ctx, ch.ID, slack.MsgOptionText(text, false)); err != nil {
+			slog.Warn("Failed to send DM", "user", id, "error", err)
+		}
+	}
 }
 
 func containsGitHubUsername(message, username string) bool {

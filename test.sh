@@ -30,3 +30,7 @@ ${RUN} -e SLACK_CHANNEL=$(cat ${WORKDIR}/channel-id) -e SLACK_MESSAGE=reply1-upd
 
 # Delete second message
 ${RUN} -e SLACK_CHANNEL=$(cat ${WORKDIR}/channel-id) -e SLACK_DELETE_MESSAGE_TS=${SECOND_MESSAGE_TS} ${IMAGE}
+
+# Tag a user and invite them to the channel if they aren't a member.
+# Replace U0000000000 with a real user ID; use SLACK_MENTION_MEMBERSHIP_MODE=notify to DM instead.
+# ${RUN} -e SLACK_CHANNEL -e SLACK_MESSAGE='heads up <@U0000000000>' -e SLACK_MENTION_MEMBERSHIP_MODE=invite ${IMAGE}
