@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+/docker-slack-message
 
 # Test binary, built with `go test -c`
 *.test
