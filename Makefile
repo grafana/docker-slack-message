@@ -1,5 +1,5 @@
-DOCKER_REGISTRY ?= "grafana"
-DOCKER_REPO ?= $(DOCKER_REGISTRY)/docker-slack-message
+DOCKER_REGISTRY ?= us-docker.pkg.dev
+DOCKER_REPO ?= $(DOCKER_REGISTRY)/grafanalabs-global/dockerhub-docker-slack-message-prod-mirror/docker-slack-message
 
 LATEST_IMAGE := $(DOCKER_REPO):latest
 COMMIT_IMAGE := $(DOCKER_REPO):$(shell git rev-parse --short HEAD)
