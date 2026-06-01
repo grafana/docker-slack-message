@@ -16,12 +16,15 @@ jobs:
       id-token: write
       
     steps:
-    - name: Login to Docker Hub
-      uses: grafana/shared-workflows/actions/dockerhub-login@ef3a62a3ca4c1a15505b4235a5a51493194da3c7 # dockerhub-login/v1.0.4
+    - uses: grafana/shared-workflows/actions/login-to-gar@12c87e5aa323694c820c1ff3d8e47e8237e05136 # login-to-gar/v1.0.2
       if: github.event_name != 'pull_request'
+      id: login-to-gar
+
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       with:
           persist-credentials: false
+
     - run: make build
+
     - run: make push
       if: github.event_name != 'pull_request'
