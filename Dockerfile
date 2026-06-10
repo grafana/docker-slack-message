@@ -9,4 +9,7 @@ FROM alpine:latest@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a
 COPY --from=build /app/slack-message /app/slack-message
 RUN mkdir /app/outputs
 
+# Default server-mode port (only used when SLACK_SERVER_MODE=true).
+EXPOSE 8080
+
 ENTRYPOINT ["/app/slack-message"]

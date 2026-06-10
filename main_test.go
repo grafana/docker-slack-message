@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -331,6 +332,40 @@ func TestParseMembershipMode(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+// TestSlackMessageHandlerValidation covers the request paths that fail before
+// any Slack API call, so a nil client is never reached.
+func TestSlackMessageHandlerValidation(t *testing.T) {
+	t.Parallel()
+
+	serverCfg := config{Token: "xoxb-secret-token", MappingEndpoint: "https://map.local/"}
+	handler := slackMessageHandler(serverCfg, nil, nil)
+
+	tests := []struct {
+		name       string
+		method     string
+		body       string
+		wantStatus int
+	}{
+		{name: "method not allowed", method: http.MethodGet, body: "", wantStatus: http.StatusMethodNotAllowed},
+		{name: "invalid json", method: http.MethodPost, body: "not json", wantStatus: http.StatusBadRequest},
+		{name: "missing channel", method: http.MethodPost, body: `{"message":"hi"}`, wantStatus: http.StatusBadRequest},
+		{name: "token in body rejected", method: http.MethodPost, body: `{"channel":"C1","token":"xoxb-evil"}`, wantStatus: http.StatusBadRequest},
+		{name: "unknown field rejected", method: http.MethodPost, body: `{"channel":"C1","bogus":true}`, wantStatus: http.StatusBadRequest},
+		{name: "invalid membership mode", method: http.MethodPost, body: `{"channel":"C1","mention_membership_mode":"bogus"}`, wantStatus: http.StatusBadRequest},
+		{name: "update and delete conflict", method: http.MethodPost, body: `{"channel":"C1","update_message_ts":"1","delete_message_ts":"2"}`, wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+			require.Equal(t, tt.wantStatus, rec.Code)
 		})
 	}
 }
