@@ -1,10 +1,10 @@
 module github.com/grafana/docker-slack-message
 
-go 1.25
+go 1.26
 
 require (
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/slack-go/slack v0.29.0
+	github.com/slack-go/slack v0.30.1
 	github.com/stretchr/testify v1.12.1
 )
 
