@@ -4,9 +4,10 @@ WORKDIR /app
 COPY . .
 RUN CGO_ENABLED=0 go build -o slack-message ./...
 
-FROM alpine:latest@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
+FROM gcr.io/distroless/static:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 
+WORKDIR /app/outputs
+WORKDIR /app
 COPY --from=build /app/slack-message /app/slack-message
-RUN mkdir /app/outputs
 
 ENTRYPOINT ["/app/slack-message"]
